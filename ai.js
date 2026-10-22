@@ -34,7 +34,7 @@ function evalCell(grid, n, c, r, p) {
 }
 
 // 返回 AI(ai 色) 的最佳落点 [c, r]；全盘空则走天元
-export function aiMove(grid, n, ai, human) {
+export function aiMove(grid, n, ai, human, eps = 0) {
   const cell = (x, y) => y * n + x;
   // 候选：所有棋子 2 格邻域内的空格
   const near = new Set();
@@ -80,7 +80,8 @@ export function aiMove(grid, n, ai, human) {
     const c = idx % n, r = Math.floor(idx / n);
     const atk = evalCell(grid, n, c, r, ai).total;
     const def = evalCell(grid, n, c, r, human).total;
-    const s = atk + 0.9 * def + centerBias(c, r) * 0.5;
+    let s = atk + 0.9 * def + centerBias(c, r) * 0.5;
+    if (eps) s += Math.random() * eps;   // 观赏局：加入随机性，走法更多样
     if (s > bestScore) { bestScore = s; best = idx; }
   }
   return [best % n, Math.floor(best / n)];

@@ -134,18 +134,20 @@ const rings = [];
 // ---------- 游戏状态 ----------
 const cell = (c, r) => r * N + c;
 let grid, current, moveCount, gameOver, winStones;
-let mode = 'human', aiBusy = false;
+let mode = 'human', speed = 420, aiSeq = 0;   // speed: AI 落子间隔 ms；aiSeq: 定时器代次
+
+const aiSide = () => (mode === 'aiverus') ? true : (mode === 'ai' && current === 2);
 
 function scheduleAI() {
-  if (mode !== 'ai' || gameOver || current !== 2 || aiBusy) return;
-  aiBusy = true;
+  if (gameOver || !aiSide()) return;
+  const seq = ++aiSeq;
   updateHUD();
   setTimeout(() => {
-    aiBusy = false;
-    if (gameOver || current !== 2) return;
-    const [c, r] = aiMove(grid, N, 2, 1);
+    if (seq !== aiSeq || gameOver) return;   // 已有更新的一代定时器/对局 -> 本代作废
+    const me = current;
+    const [c, r] = aiMove(grid, N, me, 3 - me, mode === 'aiverus' ? 25 : 0);
     placeStone(c, r);
-  }, 420);
+  }, speed);
 }
 
 function resetGame() {
@@ -157,7 +159,7 @@ function resetGame() {
   for (const rg of rings) scene.remove(rg);
   rings.length = 0;
   ghost.visible = false;
-  aiBusy = false;
+  aiSeq++;
   updateHUD();
   scheduleAI();
 }
@@ -225,8 +227,12 @@ function updateHUD() {
   if (gameOver) {
     const winner = winStones.length ? (grid[cell(winStones[0][0], winStones[0][1])] === 1 ? '黑棋' : '白棋') : null;
     $turnLabel.textContent = winner ? '对局结束' : '平局';
-    $status.textContent = winner ? `${winner} 五连获胜！` : '棋盘已满，平局。';
+    $status.textContent = winner ? (mode === 'aiverus' ? `AI 对局结束：${winner} 五连获胜！` : `${winner} 五连获胜！`) : '棋盘已满，平局。';
     $status.classList.toggle('win', !!winner);
+  } else if (mode === 'aiverus') {
+    $turnLabel.textContent = `AI 对 AI · ${name}落子…`;
+    $status.textContent = '';
+    $status.classList.remove('win');
   } else if (mode === 'ai' && current === 2) {
     $turnLabel.textContent = 'AI 思考中…';
     $status.textContent = '';
@@ -240,10 +246,17 @@ function updateHUD() {
 }
 
 document.getElementById('resetBtn').addEventListener('click', resetGame);
+const $speedRow = document.getElementById('speedRow');
 document.getElementById('modeSel').addEventListener('change', e => {
   mode = e.target.value;
+  $speedRow.style.display = mode === 'aiverus' ? '' : 'none';
   resetGame();
 });
+document.getElementById('speedSel').addEventListener('change', e => {
+  speed = Number(e.target.value);
+});
+// 初始：speedRow 仅 aiverus 显示（默认 human -> 隐藏）
+$speedRow.style.display = 'none';
 
 // ---------- 拾取（射线 -> 最近交叉点） ----------
 const raycaster = new THREE.Raycaster();
@@ -266,7 +279,7 @@ renderer.domElement.addEventListener('pointerdown', e => {
   downX = e.clientX; downY = e.clientY; downT = performance.now();
 });
 renderer.domElement.addEventListener('pointermove', e => {
-  if (gameOver || (mode === 'ai' && current === 2)) { ghost.visible = false; return; }
+  if (gameOver || aiSide()) { ghost.visible = false; return; }
   const cr = cellFromEvent(e);
   if (cr && !stones.has(`${cr[0]},${cr[1]}`)) {
     ghost.visible = true;
@@ -280,7 +293,7 @@ renderer.domElement.addEventListener('pointermove', e => {
 });
 renderer.domElement.addEventListener('click', e => {
   const dragged = Math.hypot(e.clientX - downX, e.clientY - downY) > 6 || performance.now() - downT > 400;
-  if (dragged || (mode === 'ai' && current === 2)) return;
+  if (dragged || aiSide()) return;   // 相机拖拽不算落子；AI 回合（含 aiverus）禁止落子
   const cr = cellFromEvent(e);
   if (cr) placeStone(cr[0], cr[1]);
 });
