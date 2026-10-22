@@ -6,6 +6,11 @@
 <title>五子棋 · 3D</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #141922; }
+  #modeRow { margin-top: 12px; font-size: 12px; color: #9aa4b5; }
+  #modeRow select {
+    background: #2b3444; color: #e8ecf4; border: none; border-radius: 7px;
+    padding: 5px 8px; font-size: 12px; margin-left: 6px; cursor: pointer;
+  }
   body { font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
   canvas { display: block; }
 
@@ -29,6 +34,11 @@
   }
   .stone.white { background: radial-gradient(circle at 35% 30%, #ffffff, #b9b4a6 80%); }
   #status { margin-top: 8px; font-size: 13px; color: #9aa4b5; min-height: 17px; }
+  #modeRow { margin-top: 12px; font-size: 12px; color: #9aa4b5; }
+  #modeRow select {
+    background: #2b3444; color: #e8ecf4; border: none; border-radius: 7px;
+    padding: 5px 8px; font-size: 12px; margin-left: 6px; cursor: pointer;
+  }
   #status.win { color: #ffd166; font-weight: 600; }
   #moves { margin-top: 8px; font-size: 12px; color: #6b7484; }
   #resetBtn {
@@ -52,6 +62,7 @@
 <div id="hud">
   <div id="title">五子棋 <span>3D</span></div>
   <div id="turnRow"><i id="stone" class="stone"></i><span id="turnLabel">黑棋行棋</span></div>
+  <div id="modeRow">对手<select id="modeSel"><option value="human">人类（双人）</option><option value="ai">AI（你执黑先行）</option></select></div>
   <div id="status"></div>
   <div id="moves">手数 0 / 225</div>
   <button id="resetBtn">新对局</button>

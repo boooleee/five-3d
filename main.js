@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
+import { aiMove } from './ai.js';
 
 // ---------- 规则常量 ----------
 const N = 15;
@@ -133,6 +134,19 @@ const rings = [];
 // ---------- 游戏状态 ----------
 const cell = (c, r) => r * N + c;
 let grid, current, moveCount, gameOver, winStones;
+let mode = 'human', aiBusy = false;
+
+function scheduleAI() {
+  if (mode !== 'ai' || gameOver || current !== 2 || aiBusy) return;
+  aiBusy = true;
+  updateHUD();
+  setTimeout(() => {
+    aiBusy = false;
+    if (gameOver || current !== 2) return;
+    const [c, r] = aiMove(grid, N, 2, 1);
+    placeStone(c, r);
+  }, 420);
+}
 
 function resetGame() {
   grid = new Uint8Array(N * N);
@@ -143,7 +157,9 @@ function resetGame() {
   for (const rg of rings) scene.remove(rg);
   rings.length = 0;
   ghost.visible = false;
+  aiBusy = false;
   updateHUD();
+  scheduleAI();
 }
 
 const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
@@ -193,6 +209,7 @@ function placeStone(c, r) {
   } else {
     current = 3 - current;
   }
+  scheduleAI();
   updateHUD();
 }
 
@@ -210,6 +227,10 @@ function updateHUD() {
     $turnLabel.textContent = winner ? '对局结束' : '平局';
     $status.textContent = winner ? `${winner} 五连获胜！` : '棋盘已满，平局。';
     $status.classList.toggle('win', !!winner);
+  } else if (mode === 'ai' && current === 2) {
+    $turnLabel.textContent = 'AI 思考中…';
+    $status.textContent = '';
+    $status.classList.remove('win');
   } else {
     $turnLabel.textContent = `${name}行棋`;
     $status.textContent = '';
@@ -219,6 +240,10 @@ function updateHUD() {
 }
 
 document.getElementById('resetBtn').addEventListener('click', resetGame);
+document.getElementById('modeSel').addEventListener('change', e => {
+  mode = e.target.value;
+  resetGame();
+});
 
 // ---------- 拾取（射线 -> 最近交叉点） ----------
 const raycaster = new THREE.Raycaster();
@@ -241,7 +266,7 @@ renderer.domElement.addEventListener('pointerdown', e => {
   downX = e.clientX; downY = e.clientY; downT = performance.now();
 });
 renderer.domElement.addEventListener('pointermove', e => {
-  if (gameOver) { ghost.visible = false; return; }
+  if (gameOver || (mode === 'ai' && current === 2)) { ghost.visible = false; return; }
   const cr = cellFromEvent(e);
   if (cr && !stones.has(`${cr[0]},${cr[1]}`)) {
     ghost.visible = true;
@@ -255,7 +280,7 @@ renderer.domElement.addEventListener('pointermove', e => {
 });
 renderer.domElement.addEventListener('click', e => {
   const dragged = Math.hypot(e.clientX - downX, e.clientY - downY) > 6 || performance.now() - downT > 400;
-  if (dragged) return;   // 相机拖拽不算落子
+  if (dragged || (mode === 'ai' && current === 2)) return;
   const cr = cellFromEvent(e);
   if (cr) placeStone(cr[0], cr[1]);
 });
