@@ -131,10 +131,24 @@ ringGeo.rotateX(Math.PI / 2);
 const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd166 });
 const rings = [];
 
+// 干扰：赠子高亮环 + 爆炸特效
+const giftRingGeo = new THREE.TorusGeometry(STONE_R * 1.1, 0.035, 10, 40);
+giftRingGeo.rotateX(Math.PI / 2);
+const giftRingMat = new THREE.MeshBasicMaterial({ color: 0x39d2ff, transparent: true, opacity: 0.9 });
+const giftRings = [];
+const destroyedFx = [];   // 爆炸特效（冲击波 + 火花）
+let exSeq = 0;            // 爆炸定时器代次
+const shockGeo = new THREE.RingGeometry(0.55, 1.7, 48);
+shockGeo.rotateX(-Math.PI / 2);
+const sparks = [];
+for (let i = 0; i < 10; i++) sparks.push({ pos: new THREE.Vector3(), vel: new THREE.Vector3() });
+
+
 // ---------- 游戏状态 ----------
 const cell = (c, r) => r * N + c;
 let grid, current, moveCount, gameOver, winStones;
 let mode = 'human', speed = 420, aiSeq = 0;   // speed: AI 落子间隔 ms；aiSeq: 定时器代次
+let chaos = false;   // 干扰模式：随机爆炸 + 赠子
 
 const aiSide = () => (mode === 'aiverus') ? true : (mode === 'ai' && current === 2);
 
@@ -159,9 +173,15 @@ function resetGame() {
   for (const rg of rings) scene.remove(rg);
   rings.length = 0;
   ghost.visible = false;
+  for (const e of destroyedFx) { scene.remove(e.sh); scene.remove(e.points); e.pgeo.dispose(); e.pm.dispose(); }
+  destroyedFx.length = 0;
+  for (const gr of giftRings) scene.remove(gr);
+  giftRings.length = 0;
+  exSeq++;
   aiSeq++;
   updateHUD();
   scheduleAI();
+  scheduleExplosion();
 }
 
 const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
@@ -196,23 +216,129 @@ function placeStone(c, r) {
   moveCount++;
   ghost.visible = false;
 
-  const win = checkWin(c, r);
+  const gift = maybeGift(c, r);
+
+  const win = checkWin(c, r) || (gift && checkWin(gift[0], gift[1]));
   if (win) {
     gameOver = true;
     winStones = win;
-    for (const [wc, wr] of win) {
-      const rg = new THREE.Mesh(ringGeo, ringMat);
-      rg.position.set(cellPos(wc), 0.02, cellPos(wr));
-      scene.add(rg);
-      rings.push(rg);
-    }
-  } else if (moveCount === N * N) {
+    addWinRings(win);
+  } else if (boardFull()) {   // 干扰下赠子占格，手数未满也可能无空格可下
     gameOver = true;
   } else {
     current = 3 - current;
   }
   scheduleAI();
   updateHUD();
+}
+
+const boardFull = () => grid.every(v => v !== 0);
+
+// ---------- 干扰：爆炸 + 赠子 ----------
+function makeExplosionAt(c, r) {
+  const sh = new THREE.Mesh(shockGeo, new THREE.MeshBasicMaterial({ color: 0xff9840, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  sh.position.set(cellPos(c), 0.05, cellPos(r));
+  sh.scale.setScalar(0.15);
+  scene.add(sh);
+  const pts = [];
+  for (const p of sparks) {
+    p.pos.set(cellPos(c), 0.25, cellPos(r));
+    p.vel.set((Math.random() - 0.5) * 9, Math.random() * 6 + 2, (Math.random() - 0.5) * 9);
+    pts.push(p.pos.clone());
+  }
+  const pgeo = new THREE.BufferGeometry();
+  pgeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const pm = new THREE.PointsMaterial({ color: 0xffd166, size: 0.14, transparent: true, opacity: 0.95 });
+  const points = new THREE.Points(pgeo, pm);
+  scene.add(points);
+  destroyedFx.push({ t0: performance.now(), sh, pm, pgeo, points });
+}
+
+// 全板扫描五连（爆炸后局面变化，需全量判定）
+function scanWin() {
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    if (!grid[cell(c, r)]) continue;
+    const line = checkWin(c, r);
+    if (line) return { me: grid[cell(c, r)], line };
+  }
+  return null;
+}
+
+function addWinRings(line) {
+  for (const [wc, wr] of line) {
+    const rg = new THREE.Mesh(ringGeo, ringMat);
+    rg.position.set(cellPos(wc), 0.02, cellPos(wr));
+    scene.add(rg);
+    rings.push(rg);
+  }
+}
+
+function explodeAt(c, r) {
+  // 3×3 摧毁
+  for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) {
+    const x = c + dc, y = r + dr;
+    if (x < 0 || x >= N || y < 0 || y >= N) continue;
+    const key = `${x},${y}`;
+    if (!grid[cell(x, y)]) continue;
+    const m = stones.get(key);
+    if (m) { scene.remove(m); stones.delete(key); }
+    for (let i = giftRings.length - 1; i >= 0; i--) {
+      if (giftRings[i].userData.key === key) { scene.remove(giftRings[i]); giftRings.splice(i, 1); }
+    }
+    grid[cell(x, y)] = 0;
+  }
+  makeExplosionAt(c, r);
+  // 爆炸后全板扫描：若此前已存在某方五连（如赠子凑出），在此捕获
+  const win = scanWin();
+  if (win) {
+    gameOver = true;
+    winStones = win.line;
+    addWinRings(win.line);
+    updateHUD();
+    $status.textContent = `爆炸炸开五连，${win.me === 1 ? '黑棋' : '白棋'} 获胜！`;
+    $status.classList.add('win');
+  }
+}
+
+function scheduleExplosion() {
+  if (gameOver || !chaos) return;
+  const seq = ++exSeq;
+  setTimeout(() => {
+    if (seq !== exSeq || gameOver || !chaos) return;
+    const empty = [];
+    for (let i = 0; i < grid.length; i++) if (!grid[i]) empty.push(i);
+    if (empty.length > 2) {
+      const idx = empty[Math.floor(Math.random() * empty.length)];
+      explodeAt(idx % N, Math.floor(idx / N));
+      if (!gameOver) updateHUD();
+      scheduleExplosion();
+    }
+  }, 1200 + Math.random() * 1400);   // 随机 1.2s ~ 2.6s 再炸
+}
+
+function maybeGift(c, r) {
+  if (!chaos || Math.random() > 0.18) return null;   // 18% 概率赠 1 颗同色子
+  const neighbors = [];
+  for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const x = c + dc, y = r + dr;
+    if (x >= 0 && x < N && y >= 0 && y < N && !grid[cell(x, y)]) neighbors.push([x, y]);
+  }
+  if (!neighbors.length) return null;
+  const [gc, gr] = neighbors[Math.floor(Math.random() * neighbors.length)];
+  const gm = new THREE.Mesh(stoneGeo, current === 1 ? matBlack : matWhite);
+  gm.castShadow = true;
+  gm.position.set(cellPos(gc), 4, cellPos(gr));
+  gm.scale.setScalar(0.01);
+  scene.add(gm);
+  gm.userData = { dropT0: performance.now(), restY: STONE_H };
+  stones.set(`${gc},${gr}`, gm);
+  grid[cell(gc, gr)] = current;
+  const gr2 = new THREE.Mesh(giftRingGeo, giftRingMat);
+  gr2.position.set(cellPos(gc), 0.02, cellPos(gr));
+  gr2.userData.key = `${gc},${gr}`;
+  scene.add(gr2);
+  giftRings.push(gr2);
+  return [gc, gr];
 }
 
 // ---------- HUD ----------
@@ -254,6 +380,10 @@ document.getElementById('modeSel').addEventListener('change', e => {
 });
 document.getElementById('speedSel').addEventListener('change', e => {
   speed = Number(e.target.value);
+});
+document.getElementById('chaosChk').addEventListener('change', e => {
+  chaos = e.target.checked;
+  resetGame();   // 开关即时生效：清盘并（若开启）装填第一发爆炸
 });
 // 初始：speedRow 仅 aiverus 显示（默认 human -> 隐藏）
 $speedRow.style.display = 'none';
@@ -317,6 +447,32 @@ function animate() {
     const s = 1 + 0.18 * Math.sin(now * 0.006);
     for (const rg of rings) rg.scale.setScalar(s);
     ringMat.color.setHSL(0.12, 0.9, 0.6 + 0.15 * Math.sin(now * 0.006));
+  }
+  for (let i = giftRings.length - 1; i >= 0; i--) {
+    giftRings[i].rotation.y += 0.02;
+    giftRings[i].material.opacity = 0.55 + 0.35 * Math.sin(now * 0.005 + i);
+  }
+  for (let i = destroyedFx.length - 1; i >= 0; i--) {
+    const e = destroyedFx[i];
+    const t = (now - e.t0) / 700;
+    if (t >= 1) {
+      scene.remove(e.sh); scene.remove(e.points);
+      e.pgeo.dispose(); e.pm.dispose();
+      destroyedFx.splice(i, 1);
+      continue;
+    }
+    const sc = 0.15 + t * 1.5;
+    e.sh.scale.setScalar(sc);
+    e.sh.material.opacity = 0.9 * (1 - t);
+    const pa = e.pgeo.attributes.position;
+    for (let k = 0; k < pa.count; k++) {
+      const p = sparks[k];
+      p.pos.addScaledVector(p.vel, 1 / 60);
+      p.vel.y -= 0.35;
+      pa.setXYZ(k, p.pos.x, p.pos.y, p.pos.z);
+    }
+    pa.needsUpdate = true;
+    e.pm.opacity = 0.95 * (1 - t);
   }
   renderer.render(scene, camera);
 }
