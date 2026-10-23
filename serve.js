@@ -11,6 +11,7 @@ const MIME = {
   '.css': 'text/css',
   '.png': 'image/png',
   '.json': 'application/json',
+  '.webmanifest': 'application/manifest+json',
 };
 
 const toSlash = p => p.replace(/\\/g, '/');

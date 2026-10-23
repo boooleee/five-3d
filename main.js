@@ -329,3 +329,10 @@ addEventListener('resize', () => {
 
 resetGame();
 animate();
+
+// ---------- PWA：注册 service worker（离线可玩 / 可安装为应用） ----------
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW 注册失败：', err));
+  });
+}

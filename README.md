@@ -37,6 +37,15 @@ node serve.js        # 默认端口 8322，换端口：PORT=8000 node serve.js
 
 规则：15×15，黑先，先连成五子（任意方向、长连也算）者胜；225 手满盘无五连为平局。
 
+## 安装为应用 / 离线使用
+
+本站是标准 PWA（`manifest.webmanifest` + service worker），Chrome/Edge 可安装为独立应用并离线游玩：
+
+- **Chrome / Edge**：地址栏右侧出现「安装」图标，点它；或菜单 → 「将此站添加为应用 / 安装页面」。装好后图标是自定义的五连黑子棋图，独立窗口启动，断网也能玩（首次需联网让 service worker 缓存资源）
+- 线上入口：`https://boooleee.github.io/five-3d/`
+- service worker 策略为「网络优先 + 缓存兜底」：在线时始终用最新代码，离线时回落缓存版
+
+
 ## 对手模式
 
 HUD 中「对手」下拉框切换：
@@ -55,6 +64,9 @@ AI 为启发式评估（非搜索树）：候选点取全部棋子 2 格邻域�
 ├── ai.js                   # AI 走子（启发式评估，纯函数，无 DOM 依赖）
 ├── serve.js                # 极简静态服务器（跨 Windows/WSL）
 ├── three.module.js         # three.js r160（本地化，离线可用）
+├── manifest.webmanifest    # PWA 清单（安装为应用）
+├── sw.js                   # service worker（离线缓存）
+├── icons/                  # PWA 图标（程序化生成）
 └── vendor/OrbitControls.js # OrbitControls（本地化）
 ```
 
