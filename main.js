@@ -142,6 +142,7 @@ const flipRingMat = new THREE.MeshBasicMaterial({ color: 0xff5a5a, transparent: 
 const flipRings = [];
 const destroyedFx = [];   // 爆炸特效（冲击波 + 火花）
 let exSeq = 0;            // 爆炸定时器代次
+let resSeq = 0;           // 残局定时器代次
 const shockGeo = new THREE.RingGeometry(0.55, 1.7, 48);
 shockGeo.rotateX(-Math.PI / 2);
 const sparks = [];
@@ -152,7 +153,7 @@ for (let i = 0; i < 10; i++) sparks.push({ pos: new THREE.Vector3(), vel: new TH
 const cell = (c, r) => r * N + c;
 let grid, current, moveCount, gameOver, winStones;
 let mode = 'human', speed = 420, aiSeq = 0;   // speed: AI 落子间隔 ms；aiSeq: 定时器代次
-const chaos = { explosion: false, gift: false, flip: false };   // 干扰开关：爆炸 / 赠子 / 反色，独立可开关
+const chaos = { explosion: false, gift: false, flip: false, residual: false };   // 干扰开关：爆炸 / 赠子 / 反色 / 残局，独立可开关
 
 const aiSide = () => (mode === 'aiverus') ? true : (mode === 'ai' && current === 2);
 
@@ -185,9 +186,11 @@ function resetGame() {
   flipRings.length = 0;
   exSeq++;
   aiSeq++;
+  resSeq++;
   updateHUD();
   scheduleAI();
   scheduleExplosion();
+  scheduleResidual();
 }
 
 const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
@@ -286,23 +289,25 @@ function addWinRings(line) {
   }
 }
 
+// 移除交叉点上的棋子（含赠子/反色环清理）；空点或越界无操作
+function removeStoneAt(c, r) {
+  if (c < 0 || c >= N || r < 0 || r >= N) return;
+  const key = `${c},${r}`;
+  if (!grid[cell(c, r)]) return;
+  const m = stones.get(key);
+  if (m) { scene.remove(m); stones.delete(key); }
+  for (let i = giftRings.length - 1; i >= 0; i--) {
+    if (giftRings[i].userData.key === key) { scene.remove(giftRings[i]); giftRings.splice(i, 1); }
+  }
+  for (let i = flipRings.length - 1; i >= 0; i--) {
+    if (flipRings[i].userData.key === key) { scene.remove(flipRings[i]); flipRings.splice(i, 1); }
+  }
+  grid[cell(c, r)] = 0;
+}
+
 function explodeAt(c, r) {
   // 3×3 摧毁
-  for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) {
-    const x = c + dc, y = r + dr;
-    if (x < 0 || x >= N || y < 0 || y >= N) continue;
-    const key = `${x},${y}`;
-    if (!grid[cell(x, y)]) continue;
-    const m = stones.get(key);
-    if (m) { scene.remove(m); stones.delete(key); }
-    for (let i = giftRings.length - 1; i >= 0; i--) {
-      if (giftRings[i].userData.key === key) { scene.remove(giftRings[i]); giftRings.splice(i, 1); }
-    }
-    for (let i = flipRings.length - 1; i >= 0; i--) {
-      if (flipRings[i].userData.key === key) { scene.remove(flipRings[i]); flipRings.splice(i, 1); }
-    }
-    grid[cell(x, y)] = 0;
-  }
+  for (let dc = -1; dc <= 1; dc++) for (let dr = -1; dr <= 1; dr++) removeStoneAt(c + dc, r + dr);
   makeExplosionAt(c, r);
   // 爆炸后全板扫描：若此前已存在某方五连（如赠子凑出），在此捕获
   const win = scanWin();
@@ -330,6 +335,33 @@ function scheduleExplosion() {
       scheduleExplosion();
     }
   }, 1200 + Math.random() * 1400);   // 随机 1.2s ~ 2.6s 再炸
+}
+
+// 残局：开局 8~20s 后随机抽走现有棋子形成残局局面，每局仅一次
+function scheduleResidual() {
+  if (gameOver || !chaos.residual) return;
+  const seq = ++resSeq;
+  setTimeout(() => {
+    if (seq !== resSeq || gameOver || !chaos.residual) return;
+    doResidual();   // 不重排：每局只出现一次
+  }, 8000 + Math.random() * 12000);
+}
+
+function doResidual() {
+  const entries = [...stones.entries()];
+  if (entries.length < 4) return;   // 子太少抽不出残局，跳过（唯一一次机会用完）
+  const ratio = 0.25 + Math.random() * 0.4;   // 抽子比例 25%~65%，每局随机
+  let removed = 0;
+  for (const [key] of entries) {
+    if (Math.random() < ratio) {
+      const [c, r] = key.split(',').map(Number);
+      removeStoneAt(c, r);
+      removed++;
+    }
+  }
+  if (!removed) return;
+  updateHUD();
+  $status.textContent = `残局抽子：随机抽走 ${removed}/${entries.length} 颗，接着下！`;
 }
 
 function maybeGift(c, r, color) {
@@ -408,7 +440,7 @@ document.getElementById('modeSel').addEventListener('change', e => {
 document.getElementById('speedSel').addEventListener('change', e => {
   speed = Number(e.target.value);
 });
-for (const [id, key] of [['chaosExplosionChk', 'explosion'], ['chaosGiftChk', 'gift'], ['chaosFlipChk', 'flip']]) {
+for (const [id, key] of [['chaosExplosionChk', 'explosion'], ['chaosGiftChk', 'gift'], ['chaosFlipChk', 'flip'], ['chaosResidualChk', 'residual']]) {
   document.getElementById(id).addEventListener('change', e => {
     chaos[key] = e.target.checked;
     resetGame();   // 开关即时生效：清盘并重新装填定时器
