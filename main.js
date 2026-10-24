@@ -136,6 +136,10 @@ const giftRingGeo = new THREE.TorusGeometry(STONE_R * 1.1, 0.035, 10, 40);
 giftRingGeo.rotateX(Math.PI / 2);
 const giftRingMat = new THREE.MeshBasicMaterial({ color: 0x39d2ff, transparent: true, opacity: 0.9 });
 const giftRings = [];
+const flipRingGeo = new THREE.TorusGeometry(STONE_R * 1.1, 0.035, 10, 40);
+flipRingGeo.rotateX(Math.PI / 2);
+const flipRingMat = new THREE.MeshBasicMaterial({ color: 0xff5a5a, transparent: true, opacity: 0.9 });
+const flipRings = [];
 const destroyedFx = [];   // 爆炸特效（冲击波 + 火花）
 let exSeq = 0;            // 爆炸定时器代次
 const shockGeo = new THREE.RingGeometry(0.55, 1.7, 48);
@@ -148,7 +152,7 @@ for (let i = 0; i < 10; i++) sparks.push({ pos: new THREE.Vector3(), vel: new TH
 const cell = (c, r) => r * N + c;
 let grid, current, moveCount, gameOver, winStones;
 let mode = 'human', speed = 420, aiSeq = 0;   // speed: AI 落子间隔 ms；aiSeq: 定时器代次
-let chaos = false;   // 干扰模式：随机爆炸 + 赠子
+const chaos = { explosion: false, gift: false, flip: false };   // 干扰开关：爆炸 / 赠子 / 反色，独立可开关
 
 const aiSide = () => (mode === 'aiverus') ? true : (mode === 'ai' && current === 2);
 
@@ -177,6 +181,8 @@ function resetGame() {
   destroyedFx.length = 0;
   for (const gr of giftRings) scene.remove(gr);
   giftRings.length = 0;
+  for (const fr of flipRings) scene.remove(fr);
+  flipRings.length = 0;
   exSeq++;
   aiSeq++;
   updateHUD();
@@ -203,7 +209,10 @@ function checkWin(c, r) {
 
 function placeStone(c, r) {
   if (gameOver || grid[cell(c, r)]) return;
-  const mat = current === 1 ? matBlack : matWhite;
+  let color = current;
+  const flipped = maybeFlip(c, r, color);
+  if (flipped) color = 3 - color;   // 反色：这颗子变成对方颜色
+  const mat = color === 1 ? matBlack : matWhite;
   const m = new THREE.Mesh(stoneGeo, mat);
   m.castShadow = true;
   m.position.set(cellPos(c), 4, cellPos(r));
@@ -212,11 +221,11 @@ function placeStone(c, r) {
   m.userData = { dropT0: performance.now(), restY: STONE_H };
   stones.set(`${c},${r}`, m);
 
-  grid[cell(c, r)] = current;
+  grid[cell(c, r)] = color;
   moveCount++;
   ghost.visible = false;
 
-  const gift = maybeGift(c, r);
+  const gift = maybeGift(c, r, color);
 
   const win = checkWin(c, r) || (gift && checkWin(gift[0], gift[1]));
   if (win) {
@@ -230,6 +239,10 @@ function placeStone(c, r) {
   }
   scheduleAI();
   updateHUD();
+  if (gameOver && winStones.length && flipped) {   // 反色翻盘：说明获胜原因（须在 updateHUD 之后，否则被覆盖）
+    const w = grid[cell(winStones[0][0], winStones[0][1])] === 1 ? '黑棋' : '白棋';
+    $status.textContent = `反色翻盘：${w} 五连获胜！`;
+  }
 }
 
 const boardFull = () => grid.every(v => v !== 0);
@@ -285,6 +298,9 @@ function explodeAt(c, r) {
     for (let i = giftRings.length - 1; i >= 0; i--) {
       if (giftRings[i].userData.key === key) { scene.remove(giftRings[i]); giftRings.splice(i, 1); }
     }
+    for (let i = flipRings.length - 1; i >= 0; i--) {
+      if (flipRings[i].userData.key === key) { scene.remove(flipRings[i]); flipRings.splice(i, 1); }
+    }
     grid[cell(x, y)] = 0;
   }
   makeExplosionAt(c, r);
@@ -301,10 +317,10 @@ function explodeAt(c, r) {
 }
 
 function scheduleExplosion() {
-  if (gameOver || !chaos) return;
+  if (gameOver || !chaos.explosion) return;
   const seq = ++exSeq;
   setTimeout(() => {
-    if (seq !== exSeq || gameOver || !chaos) return;
+    if (seq !== exSeq || gameOver || !chaos.explosion) return;
     const empty = [];
     for (let i = 0; i < grid.length; i++) if (!grid[i]) empty.push(i);
     if (empty.length > 2) {
@@ -316,8 +332,8 @@ function scheduleExplosion() {
   }, 1200 + Math.random() * 1400);   // 随机 1.2s ~ 2.6s 再炸
 }
 
-function maybeGift(c, r) {
-  if (!chaos || Math.random() > 0.18) return null;   // 18% 概率赠 1 颗同色子
+function maybeGift(c, r, color) {
+  if (!chaos.gift || Math.random() > 0.18) return null;   // 18% 概率赠 1 颗同色子（与刚落下的子同色）
   const neighbors = [];
   for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
     const x = c + dc, y = r + dr;
@@ -325,20 +341,31 @@ function maybeGift(c, r) {
   }
   if (!neighbors.length) return null;
   const [gc, gr] = neighbors[Math.floor(Math.random() * neighbors.length)];
-  const gm = new THREE.Mesh(stoneGeo, current === 1 ? matBlack : matWhite);
+  const gm = new THREE.Mesh(stoneGeo, color === 1 ? matBlack : matWhite);
   gm.castShadow = true;
   gm.position.set(cellPos(gc), 4, cellPos(gr));
   gm.scale.setScalar(0.01);
   scene.add(gm);
   gm.userData = { dropT0: performance.now(), restY: STONE_H };
   stones.set(`${gc},${gr}`, gm);
-  grid[cell(gc, gr)] = current;
+  grid[cell(gc, gr)] = color;
   const gr2 = new THREE.Mesh(giftRingGeo, giftRingMat);
   gr2.position.set(cellPos(gc), 0.02, cellPos(gr));
   gr2.userData.key = `${gc},${gr}`;
   scene.add(gr2);
   giftRings.push(gr2);
   return [gc, gr];
+}
+
+// 反色：18% 概率刚落的子变成对方颜色（红色环标识）
+function maybeFlip(c, r, color) {
+  if (!chaos.flip || Math.random() > 0.18) return false;
+  const fr = new THREE.Mesh(flipRingGeo, flipRingMat);
+  fr.position.set(cellPos(c), 0.02, cellPos(r));
+  fr.userData.key = `${c},${r}`;
+  scene.add(fr);
+  flipRings.push(fr);
+  return true;
 }
 
 // ---------- HUD ----------
@@ -381,10 +408,12 @@ document.getElementById('modeSel').addEventListener('change', e => {
 document.getElementById('speedSel').addEventListener('change', e => {
   speed = Number(e.target.value);
 });
-document.getElementById('chaosChk').addEventListener('change', e => {
-  chaos = e.target.checked;
-  resetGame();   // 开关即时生效：清盘并（若开启）装填第一发爆炸
-});
+for (const [id, key] of [['chaosExplosionChk', 'explosion'], ['chaosGiftChk', 'gift'], ['chaosFlipChk', 'flip']]) {
+  document.getElementById(id).addEventListener('change', e => {
+    chaos[key] = e.target.checked;
+    resetGame();   // 开关即时生效：清盘并重新装填定时器
+  });
+}
 // 初始：speedRow 仅 aiverus 显示（默认 human -> 隐藏）
 $speedRow.style.display = 'none';
 
@@ -451,6 +480,10 @@ function animate() {
   for (let i = giftRings.length - 1; i >= 0; i--) {
     giftRings[i].rotation.y += 0.02;
     giftRings[i].material.opacity = 0.55 + 0.35 * Math.sin(now * 0.005 + i);
+  }
+  for (let i = flipRings.length - 1; i >= 0; i--) {
+    flipRings[i].rotation.y -= 0.02;
+    flipRings[i].material.opacity = 0.55 + 0.35 * Math.sin(now * 0.005 + i * 1.7);
   }
   for (let i = destroyedFx.length - 1; i >= 0; i--) {
     const e = destroyedFx[i];
